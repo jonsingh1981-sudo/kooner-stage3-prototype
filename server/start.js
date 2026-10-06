@@ -1,0 +1,15 @@
+'use strict';
+const {runMigrations}=require('./migrate');
+const {seed}=require('./seed');
+const app=require('./index');
+const {pool}=require('./db');
+
+async function start(){
+ const migration=await runMigrations();
+ await seed();
+ const port=Number(process.env.PORT||10000);
+ const server=app.listen(port,'0.0.0.0',()=>console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,environment:process.env.APP_ENV||'test'})));
+ const shutdown=signal=>{console.log(JSON.stringify({level:'info',event:'shutdown',signal}));server.close(async()=>{await pool.end();process.exit(0)});setTimeout(()=>process.exit(1),10000).unref()};
+ process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
+}
+start().catch(e=>{console.error(JSON.stringify({level:'error',event:'startup_failed',message:e.message,stack:e.stack}));process.exit(1)});

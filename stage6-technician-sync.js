@@ -1,0 +1,35 @@
+/* Stage 6 Technician Mobile: preserve Stage 4 UI, replace browser-only sync transport with authenticated server sync. */
+(function(){
+ if(!window.KoonerStage6?.active||!KoonerStage6.user?.roles?.includes('technician'))return;
+ const csrf=KoonerStage6.csrfToken;
+ const unresolved=['Pending Sync','Failed','Conflict','Operations Review'];
+ async function api(path,opts={}){const r=await fetch(path,{credentials:'same-origin',...opts,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,'X-Kooner-Interface':'Technician Mobile',...(opts.headers||{})}});const x=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(x.message||`Server returned ${r.status}`);e.status=r.status;e.body=x;throw e}return x}
+ function persistDevice(){K4.writeDevice(S)}
+ function allResolved(){return !(S.mobileSyncQueue||[]).some(e=>unresolved.includes(e.status))}
+ function finishServerSession(){if(!allResolved())return false;K4.offlineSession=false;try{localStorage.removeItem(K4.deviceKey)}catch{};location.reload();return true}
+ async function pullServerResolutions(){const rows=(S.mobileSyncQueue||[]).filter(e=>e.status==='Operations Review');if(!rows.length)return 0;const x=await api('/api/v1/sync/my-events?ids='+encodeURIComponent(rows.map(r=>r.id).join(',')),{method:'GET',headers:{}});let n=0;for(const e of rows){const s=(x.items||[]).find(q=>q.eventId===e.id);if(!s)continue;if(s.status==='Accepted'){e.status='Synced';e.applied=true;e.serverSyncTime=s.serverSyncTime||new Date().toISOString();e.resolution='Applied after Operations review';n++}else if(s.status==='Discarded'){e.status='Discarded';e.applied=false;e.resolution='Operations retained server value';n++}else if(s.status==='Failed'){e.status='Failed';e.resolution=s.resolution?.message||e.resolution;n++}}if(n)persistDevice();return n}
+ window.syncAll=async function(){
+  if(S.mobileDevice?.online===false)return alert('Go Online before syncing.');
+  try{await pullServerResolutions()}catch(e){console.warn('Stage 6 resolution pull failed',e)}
+  const pending=(S.mobileSyncQueue||[]).filter(e=>e.status==='Pending Sync'&&e.payload?.wo&&e.deviceSnapshot).sort((a,b)=>String(a.deviceCaptureTime).localeCompare(String(b.deviceCaptureTime)));
+  if(!pending.length){if(finishServerSession())return;renderSync();return alert('There are no Pending Sync events to send.');}
+  const groups={};pending.forEach(e=>(groups[e.payload.wo]??=[]).push(e));let synced=0,conflicts=0,failed=0;
+  for(const [wid,events] of Object.entries(groups)){
+   try{
+    const x=await api('/api/v1/sync/mobile-batch',{method:'POST',body:JSON.stringify({deviceId:S.mobileDevice?.id||'KOONER-MOBILE-TEST-01',workOrder:wid,events:events.map(e=>({eventId:e.id,eventType:e.type||'mobile.snapshot',eventTime:e.eventTime,deviceCaptureTime:e.deviceCaptureTime,payload:e.payload||{},deviceSnapshot:e.deviceSnapshot,attendance:e.payload?.attendance||null,task:e.payload?.task||null}))})});
+    [...(x.accepted||[]),...(x.replayed||[])].forEach(r=>{const e=(S.mobileSyncQueue||[]).find(q=>q.id===r.eventId);if(!e)return;if(r.status==='Accepted'){e.status='Synced';e.applied=true;e.serverSyncTime=r.serverSyncTime||new Date().toISOString();synced++}else if(r.status==='Discarded'){e.status='Discarded';e.applied=false}else if(r.status==='Operations Review'){e.status='Operations Review'}});
+   }catch(e){
+    if(e.status===409&&e.body?.conflict){const c=e.body.conflict,ev=(S.mobileSyncQueue||[]).find(q=>q.id===c.eventId);if(ev){ev.status='Conflict';ev.conflictId=c.conflictId;ev.serverValueSummary=`${c.entity} ${c.ref} • server version ${c.serverVersion}`;ev.deviceValueSummary=`Offline device based on version ${c.deviceVersion}`;ev.resolution='Server record changed while device was offline'}conflicts++;}
+    else{const ev=events.find(q=>q.status==='Pending Sync');if(ev){ev.status='Failed';ev.failureReason=e.message;ev.resolution=e.message}failed++;}
+   }
+  }
+  persistDevice();renderSync();if(!conflicts&&!failed&&finishServerSession())return;alert(`${synced} event(s) synchronised.${conflicts?' '+conflicts+' conflict(s) require review.':''}${failed?' '+failed+' event(s) failed.':''}`)
+ };
+ window.retryFailedSync=async function(id){const e=(S.mobileSyncQueue||[]).find(x=>x.id===id);if(!e)return;try{await api(`/api/v1/sync/mobile-events/${encodeURIComponent(id)}/retry`,{method:'POST',body:'{}'})}catch(err){if(err.status!==404)return alert(err.message)}e.status='Pending Sync';e.serverSyncTime=null;delete e.resolution;delete e.failureReason;persistDevice();renderSync()};
+ window.retryConflict=async function(id){const e=(S.mobileSyncQueue||[]).find(x=>x.id===id);if(!e)return;try{await api(`/api/v1/sync/mobile-events/${encodeURIComponent(id)}/retry`,{method:'POST',body:'{}'});e.status='Pending Sync';delete e.resolution;persistDevice();hideSheet();renderSync()}catch(err){alert(err.message)}};
+ window.discardDeviceChange=async function(id){const e=(S.mobileSyncQueue||[]).find(x=>x.id===id);if(!e)return;try{await api(`/api/v1/sync/mobile-events/${encodeURIComponent(id)}/discard`,{method:'POST',body:JSON.stringify({reason:'Technician discarded device change'})})}catch(err){if(err.status!==404)return alert(err.message)}e.status='Discarded';e.applied=false;e.resolution='Device change discarded; server value retained';persistDevice();hideSheet();if(!finishServerSession())renderSync()};
+ window.saveSyncReferral=async function(id){const e=(S.mobileSyncQueue||[]).find(x=>x.id===id),reason=M('syncReferralReason').value.trim();if(!e)return;if(!reason)return alert('Reason is required.');try{const r=await api(`/api/v1/sync/mobile-events/${encodeURIComponent(id)}/refer`,{method:'POST',body:JSON.stringify({reason})});e.status='Operations Review';e.conflictId=r.conflictId||e.conflictId;e.referralReason=reason;e.resolution='Awaiting Operations review';persistDevice();hideSheet();renderSync()}catch(err){alert(err.message)}};
+ window.reviewConflict=function(id){const e=(S.mobileSyncQueue||[]).find(x=>x.id===id);if(!e)return;showSheet(`<h3>Review Sync Conflict</h3><div class="notice bad"><b>Server-authoritative value</b><br>${e.serverValueSummary||'Server record changed while device was offline.'}</div><div class=notice><b>Device value</b><br>${e.deviceValueSummary||K4.summaryPack(e.deviceSnapshot)}</div><div class=twobtn><button class=btn onclick="retryConflict('${id}')">Retry</button><button class=btn onclick="discardDeviceChange('${id}')">Discard Device Change</button></div><button class="btn warn" onclick="syncReferralModal('${id}')">Operations Review</button><div class=notice>No device value is applied silently. Retry may conflict again until the server change is reviewed/rebased.</div><div class=actions><button class=btn onclick=hideSheet()>Close</button></div>`)};
+ // The Stage 4 visual Sync Centre is retained; only server transport/authority changed.
+ const oldRender=window.renderSync;window.renderSync=function(){oldRender();const el=M('mobileContent');if(el)el.insertAdjacentHTML('afterbegin','<div class="notice good"><b>Stage 6 server sync active.</b><br>Pending device events are idempotent PostgreSQL sync events, not browser-to-browser state copies.</div>')};
+})();

@@ -11,6 +11,14 @@
   if(!boot||boot.status!==200){document.documentElement.innerHTML='<body style="font-family:Arial;padding:30px"><h2>Kooner backend unavailable</h2><p>The shared database could not be loaded. Operations and Customer Portal do not use stale local business data as authority.</p></body>';return}
   const payload=JSON.parse(boot.responseText);let state=payload.legacyState||{},version=Number(payload.stateVersion||1),queue=Promise.resolve(),conflict=false;
   const interfaceName=location.pathname.includes('technician')?'Technician Mobile':location.pathname.includes('customer')?'Customer Portal':'Operations/Desktop';
+  const roleNames={customer_administrator:'Customer Administrator',site_manager:'Site Manager',fleet_manager:'Fleet Manager',authoriser:'Authoriser',customer_finance:'Finance',read_only:'Read Only',operations:'Operations',dispatcher:'Dispatcher',technician:'Technician',billing:'Billing',administrator:'Administrator'};
+  function legacyPortalPermissions(p){const out=[];if(p.includes('vehicles.read'))out.push('vehicles');if(p.includes('workorders.read'))out.push('workorders');if(p.includes('portal.submit'))out.push('submit');if(p.includes('estimates.read'))out.push('estimates');if(p.includes('estimates.approve'))out.push('approve');if(p.includes('portal.finance'))out.push('billing','invoices');if(p.includes('documents.read'))out.push('documents');if(p.includes('portal.users'))out.push('users');if(p.includes('compat.write'))out.push('mileage','notifications','po','datachange');return[...new Set(out)]}
+  if(interfaceName==='Customer Portal'&&auth.user.type==='customer'){
+    const customerRef=state.customers?.[0]?.id||null,siteRefs=(state.sites||[]).map(s=>s.id),roleCode=auth.user.roles?.[0]||'read_only',portalId=auth.user.ref||auth.user.id;
+    state.portalUsers=[{id:portalId,customer:customerRef,name:auth.user.name,email:auth.user.email||'',phone:'',role:roleNames[roleCode]||roleCode,sites:siteRefs,permissions:legacyPortalPermissions(auth.user.permissions||[]),finance:(auth.user.permissions||[]).includes('portal.finance'),readOnly:!(auth.user.permissions||[]).includes('compat.write'),status:'Active',stage6Authenticated:true}];
+    state.portalSettings={selectedUser:portalId};
+  }
+  if(interfaceName==='Technician Mobile'&&auth.user.type==='internal'&&(auth.user.roles||[]).includes('technician')&&state.techs?.length){state.mobileSettings={...(state.mobileSettings||{}),selectedTech:state.techs[0].id}}
   window.__koonerStage6State=state;
   function cache(v){try{nativeSet.call(localStorage,'koonerv1_stage6_cache',JSON.stringify(v))}catch{}}
   cache(state);
@@ -29,5 +37,6 @@
   async function logout(){await fetch('/api/v1/auth/logout',{method:'POST',headers:{'X-CSRF-Token':auth.csrfToken},credentials:'same-origin'});location.replace('/stage6-login.html')}
   window.KoonerStage6={active:true,mode:'Database/API Backed',user:auth.user,csrfToken:auth.csrfToken,get stateVersion(){return version},saveState,logout,refresh:()=>location.reload(),interfaceName};
   banner(`STAGE 6 TEST • DATABASE/API BACKED • ${interfaceName} • ${auth.user.name}`);
+  addEventListener('DOMContentLoaded',()=>{if(interfaceName==='Customer Portal'){const p=document.getElementById('persona');if(p){p.disabled=true;p.title='Stage 6 authenticated user – persona switching is disabled'}}});
   setInterval(async()=>{if(conflict||document.hidden)return;try{const r=await fetch('/api/v1/changes?since='+version,{credentials:'same-origin'});if(!r.ok)return;const x=await r.json();if(x.changed)banner(`STAGE 6 • NEW SERVER DATA AVAILABLE (v${x.version}) — refresh to load it.`,'warn')}catch{}},15000);
 })();

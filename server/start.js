@@ -1,7 +1,7 @@
 'use strict';
 const {runMigrations}=require('./migrate');
 const {seed}=require('./seed');
-const app=require('./index');
+const app=require('./stage6-gateway');
 const {pool}=require('./db');
 
 async function start(){

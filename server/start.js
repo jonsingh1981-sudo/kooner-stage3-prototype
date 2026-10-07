@@ -1,4 +1,5 @@
 'use strict';
+require('./state-syntax-hotfix');
 const {runMigrations}=require('./migrate');
 const {seed}=require('./seed');
 const {reconcileStage6DcrStatus}=require('./stage6-status');

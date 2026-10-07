@@ -13,6 +13,7 @@ router.use(authMiddleware);
 function fail(status,code,message){throw Object.assign(new Error(message),{status,code})}
 function text(v,max=4000){return String(v??'').trim().slice(0,max)}
 function isoDate(v){const s=String(v||'').slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(s))fail(422,'VALIDATION','Effective From must be a valid date');return s}
+function dateOnly(v){if(!v)return'';if(v instanceof Date&&!Number.isNaN(v.valueOf()))return v.toISOString().slice(0,10);const s=String(v);if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);const d=new Date(v);return Number.isNaN(d.valueOf())?'':d.toISOString().slice(0,10)}
 function previousDay(s){const d=new Date(`${s}T12:00:00Z`);d.setUTCDate(d.getUTCDate()-1);return d.toISOString().slice(0,10)}
 
 router.get('/api/v1/billing/labour-reviews',requireAuth,requirePermission('billing.read'),async(req,res,next)=>{try{
@@ -44,7 +45,8 @@ router.post('/api/v1/vehicles/:ref/move-site',requireAuth,requirePermission('wor
   const vr=await c.query(`SELECT v.*,s.legacy_ref current_site_ref FROM vehicles v LEFT JOIN sites s ON s.id=v.current_site_id WHERE v.legacy_ref=$1 FOR UPDATE OF v`,[req.params.ref]);if(!vr.rowCount)fail(404,'NOT_FOUND','Vehicle not found');const v=vr.rows[0];
   const sr=await c.query('SELECT id,legacy_ref FROM sites WHERE legacy_ref=$1 AND customer_id=$2 AND archived_at IS NULL',[targetRef,v.customer_id]);if(!sr.rowCount)fail(422,'VALIDATION','Selected Site does not belong to this Customer');const target=sr.rows[0];if(String(target.id)===String(v.current_site_id))fail(422,'VALIDATION','Select a different Site');
   const cur=await c.query(`SELECT vsa.*,s.legacy_ref site_ref FROM vehicle_site_assignments vsa JOIN sites s ON s.id=vsa.site_id WHERE vsa.vehicle_id=$1 AND vsa.current=true FOR UPDATE OF vsa`,[v.id]);
-  if(cur.rowCount&&String(from)<String(cur.rows[0].effective_from).slice(0,10))fail(422,'VALIDATION','Effective From cannot be earlier than the current Site Assignment start date');
+  const currentFrom=cur.rowCount?dateOnly(cur.rows[0].effective_from):'';
+  if(currentFrom&&from<currentFrom)fail(422,'VALIDATION','Effective From cannot be earlier than the current Site Assignment start date');
   if(cur.rowCount)await c.query(`UPDATE vehicle_site_assignments SET current=false,effective_to=$2,reason=CASE WHEN COALESCE(reason,'')='' THEN $3 ELSE reason || '; closed: ' || $3 END WHERE id=$1`,[cur.rows[0].id,previousDay(from),reason]);
   const ins=await c.query(`INSERT INTO vehicle_site_assignments(vehicle_id,site_id,effective_from,current,reason,changed_by) VALUES($1,$2,$3,true,$4,$5) RETURNING id`,[v.id,target.id,from,reason,req.user.id]);
   await c.query('UPDATE vehicles SET current_site_id=$2,version=version+1,updated_at=now() WHERE id=$1',[v.id,target.id]);

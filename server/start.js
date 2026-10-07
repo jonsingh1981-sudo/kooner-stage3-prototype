@@ -8,6 +8,7 @@ const {reconcileStage6DcrStatus}=require('./stage6-status');
 const {runLiveAcceptance}=require('./live-acceptance');
 const {runFinalAcceptance}=require('./live-acceptance-final');
 const {runUat002Evidence}=require('./live-uat002-evidence');
+const {runDcr117}=require('./live-dcr117');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
 
@@ -23,8 +24,9 @@ async function start(){
   console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,regressionSeed,testCredentials:{updated:testCredentials.updated||0,skipped:!!testCredentials.skipped},dcrStatus,environment:process.env.APP_ENV||'test'}));
   if((process.env.APP_ENV||'test')==='stage6-test'){
    runLiveAcceptance(port)
-    .then(core=>runFinalAcceptance(port,core))
-    .then(()=>runUat002Evidence(port))
+    .then(core=>runFinalAcceptance(port,core).then(final=>({core,final})))
+    .then(({core,final})=>runUat002Evidence(port).then(evidence=>({core,final,evidence})))
+    .then(({core,final,evidence})=>runDcr117(port,core,final,evidence))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

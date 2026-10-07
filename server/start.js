@@ -7,6 +7,7 @@ const {reconcileTestUserPasswords}=require('./test-user-passwords');
 const {reconcileStage6DcrStatus}=require('./stage6-status');
 const {runLiveAcceptance}=require('./live-acceptance');
 const {runFinalAcceptance}=require('./live-acceptance-final');
+const {runUat002Evidence}=require('./live-uat002-evidence');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
 
@@ -23,6 +24,7 @@ async function start(){
   if((process.env.APP_ENV||'test')==='stage6-test'){
    runLiveAcceptance(port)
     .then(core=>runFinalAcceptance(port,core))
+    .then(()=>runUat002Evidence(port))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

@@ -18,7 +18,7 @@ function previousDay(s){const d=new Date(`${s}T12:00:00Z`);d.setUTCDate(d.getUTC
 router.get('/api/v1/billing/labour-reviews',requireAuth,requirePermission('billing.read'),async(req,res,next)=>{try{
  const params=[];let where='1=1';if(req.query.workOrder){params.push(String(req.query.workOrder));where+=` AND w.legacy_ref=$${params.length}`}
  const r=await query(`SELECT lr.id,lr.actual_minutes,lr.expected_minutes,lr.proposed_billable_minutes,lr.approved_billable_minutes,lr.status,lr.override_reason,lr.reviewed_at,lr.version,lr.data,w.legacy_ref work_order_ref,a.legacy_ref attendance_ref,t.legacy_ref task_ref,tech.legacy_ref technician_ref,u.display_name reviewer,pr.legacy_ref pricing_rule_ref,prv.version_no pricing_version,prv.labour_rate FROM technician_labour_reviews lr JOIN work_orders w ON w.id=lr.work_order_id LEFT JOIN attendances a ON a.id=lr.attendance_id LEFT JOIN tasks t ON t.id=lr.task_id LEFT JOIN technicians tech ON tech.id=lr.technician_id LEFT JOIN users u ON u.id=lr.reviewer_user_id LEFT JOIN pricing_rule_versions prv ON prv.id=lr.pricing_rule_version_id LEFT JOIN pricing_rules pr ON pr.id=prv.pricing_rule_id WHERE ${where} ORDER BY w.updated_at DESC,lr.reviewed_at NULLS FIRST`,params);
- res.json({items:r.rows.map(x=>({id:String(x.id),workOrder:x.work_order_ref,attendance:x.attendance_ref,task:x.task_ref,technician:x.technician_ref,actualMinutes:x.actual_minutes,expectedMinutes:x.expected_minutes,proposedBillableMinutes:x.proposed_billable_minutes,approvedBillableMinutes:x.approved_billable_minutes,status:x.status,overrideReason:x.override_reason||'',reviewer:x.reviewer||'',reviewedAt:x.reviewed_at,version:Number(x.version),pricingRuleId:x.pricing_rule_ref,pricingVersion:x.pricing_version,customerRate:Number(x.labour_rate||0),reviewReason:x.data?.reviewReason||'',activity:x.data?.activity||'Working'}))})
+ res.json({items:r.rows.map(x=>({id:String(x.id),workOrder:x.work_order_ref,attendance:x.attendance_ref,task:x.task_ref,technician:x.technician_ref,actualMinutes:x.actual_minutes,expectedMinutes:x.expected_minutes,proposedBillableMinutes:x.proposed_billable_minutes,approvedBillableMinutes:x.approved_billable_minutes,status:x.status,commercialDecision:x.data?.commercialDecision||x.status,overrideReason:x.override_reason||'',reviewer:x.reviewer||'',reviewedAt:x.reviewed_at,version:Number(x.version),pricingRuleId:x.pricing_rule_ref,pricingVersion:x.pricing_version,customerRate:Number(x.labour_rate||0),reviewReason:x.data?.reviewReason||'',activity:x.data?.activity||'Working'}))})
 }catch(e){next(e)}});
 
 router.post('/api/v1/billing/labour-reviews/:id/decision',requireAuth,requirePermission('billing.write'),csrfRequired,async(req,res,next)=>{try{
@@ -30,10 +30,10 @@ router.post('/api/v1/billing/labour-reviews/:id/decision',requireAuth,requirePer
   const mins=Math.round(Number(req.body.approvedBillableMinutes));if(!Number.isFinite(mins)||mins<0)fail(422,'VALIDATION','Approved billable minutes must be zero or greater');
   const reason=text(req.body.reason,3000),proposed=Number(lr.proposed_billable_minutes||0),needsReview=!!lr.data?.chargeabilityReviewRequired;
   if((mins!==proposed||needsReview)&&!reason)fail(422,'VALIDATION','Override / review reason is required');
-  const status=mins===proposed?'Approved by Operations':'Approved Override';
-  await c.query(`UPDATE technician_labour_reviews SET approved_billable_minutes=$2,status=$3,reviewer_user_id=$4,reviewed_at=now(),override_reason=$5,version=version+1 WHERE id=$1`,[lr.id,mins,status,req.user.id,reason||null]);
-  await B.audit(c,req,'TechnicianLabourReview',lr.id,null,'Technician labour commercial review',{approvedBillableMinutes:lr.approved_billable_minutes,status:lr.status},{approvedBillableMinutes:mins,status,reviewer:req.user.display_name},reason||'Approved at proposed commercial treatment');
-  const sv=await bumpStateVersion(c);return{id:String(lr.id),workOrder:lr.work_order_ref,approvedBillableMinutes:mins,status,reviewer:req.user.display_name,version:Number(lr.version)+1,stateVersion:sv}
+  const decision=mins===proposed?'Approved by Operations':'Approved Override';
+  await c.query(`UPDATE technician_labour_reviews SET approved_billable_minutes=$2,status='Approved',reviewer_user_id=$3,reviewed_at=now(),override_reason=$4,data=jsonb_set(COALESCE(data,'{}'::jsonb),'{commercialDecision}',to_jsonb($5::text),true),version=version+1 WHERE id=$1`,[lr.id,mins,req.user.id,reason||null,decision]);
+  await B.audit(c,req,'TechnicianLabourReview',lr.id,null,'Technician labour commercial review',{approvedBillableMinutes:lr.approved_billable_minutes,status:lr.status},{approvedBillableMinutes:mins,status:'Approved',commercialDecision:decision,reviewer:req.user.display_name},reason||'Approved at proposed commercial treatment');
+  const sv=await bumpStateVersion(c);return{id:String(lr.id),workOrder:lr.work_order_ref,approvedBillableMinutes:mins,status:'Approved',commercialDecision:decision,reviewer:req.user.display_name,version:Number(lr.version)+1,stateVersion:sv}
  });res.json(result)
 }catch(e){next(e)}});
 
@@ -45,7 +45,7 @@ router.post('/api/v1/vehicles/:ref/move-site',requireAuth,requirePermission('wor
   const sr=await c.query('SELECT id,legacy_ref FROM sites WHERE legacy_ref=$1 AND customer_id=$2 AND archived_at IS NULL',[targetRef,v.customer_id]);if(!sr.rowCount)fail(422,'VALIDATION','Selected Site does not belong to this Customer');const target=sr.rows[0];if(String(target.id)===String(v.current_site_id))fail(422,'VALIDATION','Select a different Site');
   const cur=await c.query(`SELECT vsa.*,s.legacy_ref site_ref FROM vehicle_site_assignments vsa JOIN sites s ON s.id=vsa.site_id WHERE vsa.vehicle_id=$1 AND vsa.current=true FOR UPDATE OF vsa`,[v.id]);
   if(cur.rowCount&&String(from)<String(cur.rows[0].effective_from).slice(0,10))fail(422,'VALIDATION','Effective From cannot be earlier than the current Site Assignment start date');
-  if(cur.rowCount)await c.query('UPDATE vehicle_site_assignments SET current=false,effective_to=$2,reason=COALESCE(reason,\'\') || CASE WHEN reason IS NULL OR reason=\'\' THEN $3 ELSE \'; closed: \'+$3 END WHERE id=$1',[cur.rows[0].id,previousDay(from),reason]);
+  if(cur.rowCount)await c.query(`UPDATE vehicle_site_assignments SET current=false,effective_to=$2,reason=CASE WHEN COALESCE(reason,'')='' THEN $3 ELSE reason || '; closed: ' || $3 END WHERE id=$1`,[cur.rows[0].id,previousDay(from),reason]);
   const ins=await c.query(`INSERT INTO vehicle_site_assignments(vehicle_id,site_id,effective_from,current,reason,changed_by) VALUES($1,$2,$3,true,$4,$5) RETURNING id`,[v.id,target.id,from,reason,req.user.id]);
   await c.query('UPDATE vehicles SET current_site_id=$2,version=version+1,updated_at=now() WHERE id=$1',[v.id,target.id]);
   await B.audit(c,req,'Vehicle',v.id,v.legacy_ref,'Home Site changed',{site:v.current_site_ref},{site:target.legacy_ref,effectiveFrom:from,assignmentId:String(ins.rows[0].id)},reason);
@@ -53,7 +53,7 @@ router.post('/api/v1/vehicles/:ref/move-site',requireAuth,requirePermission('wor
  });res.json(result)
 }catch(e){next(e)}});
 
-// Stage 5 Emergency/VOR continuity is now also guarded on the Stage 6 server.
+// Stage 5 Emergency/VOR continuity is also guarded on the Stage 6 server.
 router.put('/api/v1/compat/state',requireAuth,csrfRequired,async(req,res,next)=>{try{
  if(!isInternal(req.user)||req.user.roles.includes('technician'))return next();
  const state=req.body?.state||{},incomingRequests=new Map((state.portalRequests||[]).map(x=>[String(x.id||''),x]));

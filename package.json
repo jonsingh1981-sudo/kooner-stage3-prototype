@@ -9,6 +9,7 @@
     "migrate": "node server/migrate.js",
     "seed": "node server/seed.js",
     "reset:test": "node server/reset-test.js",
+    "smoke": "node scripts/stage6-smoke.js",
     "test": "node --test server/tests/*.test.js"
   },
   "engines": {

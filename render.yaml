@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    buildCommand: npm ci
+    buildCommand: npm install --omit=dev
     startCommand: npm start
     autoDeployTrigger: commit
     healthCheckPath: /api/v1/health/ready

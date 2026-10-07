@@ -55,5 +55,17 @@ app.use((req,res,next)=>{
  }
  next();
 });
+// The compatibility gateway also enriches bootstrap data. DCR-116 requires removed
+// evidence to disappear from every active view, so filter any legacy enrichment record
+// marked Removed before the JSON leaves the server. The immutable audit history is not touched.
+app.use((req,res,next)=>{
+ if(req.path!=='/api/v1/bootstrap')return next();
+ const sendJson=res.json.bind(res);
+ res.json=body=>{
+  for(const w of (body?.legacyState?.wos||[]))w.evidence=(w.evidence||[]).filter(e=>e&&e.storageStatus!=='Removed');
+  return sendJson(body)
+ };
+ next()
+});
 app.use(require('./stage6-gateway'));
 module.exports=app;

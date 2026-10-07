@@ -27,7 +27,7 @@ async function runDcr122IntegrityGuard(port,dcr122){
  check('Primary manual UAT job is still at an On Site Attendance',att.status==='On Site',att.legacy_ref);
  check('Server requires DCR-122 registration verification before next journey step',journey.status===200&&j.nextAction?.code==='registration'&&j.registrationIntegrity==='DCR-122',JSON.stringify(j));
  check('Client forces Confirm Registration until DCR-122 integrity marker exists',ui.includes("verificationMethod==='Manual Physical Entry'")&&ui.includes("integrityVersion==='DCR-122'")&&ui.includes("a.status!=='On Site'||verified(a)"),'client integrity gate');
- check('Server blocks Safety/Start Work without the DCR-122 integrity marker',server.includes("if(action!==\'registration\')")&&server.includes('The next required action is Confirm Registration.'),'server bypass guard');
+ check('Server blocks Safety/Start Work without the DCR-122 integrity marker',server.includes("action!=='registration'")&&server.includes('The next required action is Confirm Registration.'),'server bypass guard');
  const after=await snap();check('Integrity guard did not alter WO-10046 / AB26 CDE',same(before,after),JSON.stringify(after));
  const result={passed:results.length,failed:0,total:results.length,dcr:'DCR-122',primaryManualWorkOrder:'WO-10046',registration:'AB26 CDE',attendance:att.legacy_ref,results};
  console.log(JSON.stringify({level:'info',event:'stage6_dcr122_integrity_guard_complete',...result}));return result

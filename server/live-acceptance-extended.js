@@ -1,16 +1,21 @@
 'use strict';
 
 const {query}=require('./db');
+const {promoteStage6Ready}=require('./stage6-status');
 
 function assert(ok,msg){if(!ok)throw new Error(msg)}
 
-async function runExtendedAcceptance(port){
+async function runExtendedAcceptance(port,coreSummary){
   if((process.env.APP_ENV||'test')==='production')return {skipped:true,reason:'Never run Stage 6 acceptance in production'};
   const password=process.env.TEST_USER_PASSWORD;if(!password)throw new Error('TEST_USER_PASSWORD required');
   const base=`http://127.0.0.1:${port}`,results=[];
   async function call(path,{method='GET',session,body,headers={}}={}){const h={...headers};if(session?.cookie)h.cookie=session.cookie;if(body!==undefined){h['content-type']='application/json';body=JSON.stringify(body)}if(session?.csrf&&!['GET','HEAD'].includes(method))h['x-csrf-token']=session.csrf;const r=await fetch(base+path,{method,headers:h,body});const text=await r.text();let data=text;try{data=text?JSON.parse(text):null}catch{}return{status:r.status,data,headers:r.headers}}
   async function login(email){const r=await call('/api/v1/auth/login',{method:'POST',body:{email,password}});assert(r.status===200,`Login failed for ${email}: ${r.status}`);return{email,cookie:(r.headers.get('set-cookie')||'').split(';')[0],csrf:r.data.csrfToken}}
   function record(name,ok,detail=''){results.push({name,ok,detail});if(!ok)throw new Error(`${name}: ${detail}`)}
+
+  const clientSource=await call('/stage6-client.js');
+  record('Front ends fail closed instead of reverting to legacy localStorage authority',clientSource.status===200&&typeof clientSource.data==='string'&&clientSource.data.includes('stage6-unavailable.html')&&!clientSource.data.includes('Legacy Prototype Test Data'),'stage6-client fail-closed source check');
+  for(const page of ['/', '/technician.html','/customer.html']){const html=await call(page);const text=String(html.data||'');record(`${page} loads Stage 6 authority before legacy UI scripts`,html.status===200&&text.indexOf('stage6-client.js')>=0&&text.indexOf('stage6-client.js')<text.indexOf('app1.js')||page!=='/'&&html.status===200&&text.indexOf('stage6-client.js')>=0&&text.indexOf('stage6-client.js')<Math.min(...['technician-core.js','stage5-shared.js'].map(x=>{const i=text.indexOf(x);return i<0?Number.MAX_SAFE_INTEGER:i})),`HTTP ${html.status}`)}
 
   const ops=await login('operations@kooner.test'),billing=await login('billing@kooner.test'),admin=await login('admin@kooner.test'),tech=await login('technician@kooner.test'),finance=await login('finance@testtransport.test'),readonly=await login('readonly@testtransport.test');
 
@@ -38,6 +43,7 @@ async function runExtendedAcceptance(port){
   const notificationCount=await query('SELECT count(*)::int n FROM notification_events');record('Notification event foundation records backend events',notificationCount.rows[0].n>0,'count='+notificationCount.rows[0].n);
   const background=await query("SELECT to_regclass('public.background_jobs') IS NOT NULL present");record('Background job foundation table exists',background.rows[0].present===true,JSON.stringify(background.rows[0]));
   const dcr=await call('/api/v1/dcr?limit=200',{session:ops});record('DCR register is shared backend data',dcr.status===200&&dcr.data.items.some(x=>x.dcr_ref==='DCR-001')&&dcr.data.items.some(x=>x.dcr_ref==='DCR-115'),`count=${dcr.data?.items?.length}`);
+  const dcr078=await query("SELECT status,deferred FROM dcr_items WHERE dcr_ref='DCR-078'");record('Stage 5 DCR-078 remains explicit Production Security Dependency',dcr078.rows[0]?.status==='Agreed / Deferred – Production Security Dependency'&&dcr078.rows[0]?.deferred===true,JSON.stringify(dcr078.rows[0]));
 
   const mfa=await call('/api/v1/auth/mfa/enrol',{method:'POST',session:readonly,body:{}});const mfaDb=await query("SELECT mfa_secret_encrypted,mfa_required FROM users WHERE email='readonly@testtransport.test'");record('MFA foundation generates and stores encrypted test secret',mfa.status===200&&!!mfa.data.secret&&!!mfaDb.rows[0]?.mfa_secret_encrypted&&mfaDb.rows[0].mfa_secret_encrypted!==mfa.data.secret&&mfaDb.rows[0].mfa_required===false,'enrol HTTP '+mfa.status);await query("UPDATE users SET mfa_secret_encrypted=NULL,mfa_required=false WHERE email='readonly@testtransport.test'");
 
@@ -56,9 +62,10 @@ async function runExtendedAcceptance(port){
   const boot=await call('/api/v1/bootstrap',{session:ops});record('Stage 1–5 operational regression seed remains available through backend bootstrap',boot.status===200&&boot.data.mode==='Database/API Backed'&&['WO-10041','WO-10042','WO-10043','WO-10044','WO-10045','WO-10038'].every(id=>boot.data.legacyState.wos.some(x=>x.id===id)),'WO count='+boot.data?.legacyState?.wos?.length);
   const previousAcceptance=await query("SELECT value FROM system_meta WHERE key='stage6_acceptance_last'");record('Database data survived application redeploy',previousAcceptance.rows[0]?.value?.persistenceSentinelPreExisted===true,JSON.stringify({persistenceSentinelPreExisted:previousAcceptance.rows[0]?.value?.persistenceSentinelPreExisted}));
 
-  const summary={passed:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok).length,total:results.length,results,at:new Date().toISOString()};
+  const summary={passed:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok).length,total:results.length,build:process.env.RENDER_GIT_COMMIT||process.env.APP_VERSION||'development',results,at:new Date().toISOString()};
   await query(`INSERT INTO system_meta(key,value,updated_at) VALUES('stage6_acceptance_extended_last',$1::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()`,[JSON.stringify(summary)]);
-  console.log(JSON.stringify({level:'info',event:'stage6_extended_acceptance_complete',...summary}));return summary;
+  const promotion=await promoteStage6Ready(coreSummary,summary);
+  console.log(JSON.stringify({level:'info',event:'stage6_extended_acceptance_complete',...summary,dcrPromotion:promotion}));return {...summary,dcrPromotion:promotion};
 }
 
 module.exports={runExtendedAcceptance};

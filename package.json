@@ -8,10 +8,11 @@
     "start": "node server/start.js",
     "migrate": "node server/migrate.js",
     "seed": "node server/seed.js",
+    "reset:test": "node server/reset-test.js",
     "test": "node --test server/tests/*.test.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

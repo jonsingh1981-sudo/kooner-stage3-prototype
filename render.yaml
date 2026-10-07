@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: kooner-stage6-platform
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci
+    startCommand: npm start
+    autoDeployTrigger: commit
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: stage6-test
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kooner-stage6-postgres
+          property: connectionString
+      - key: TEST_USER_PASSWORD
+        sync: false
+      - key: MFA_ENCRYPTION_KEY
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: OBJECT_STORAGE_PROVIDER
+        value: Not Connected
+      - key: BACKUP_STATUS
+        value: Production backup/restore test not yet verified
+      - key: PG_POOL_MAX
+        value: "10"

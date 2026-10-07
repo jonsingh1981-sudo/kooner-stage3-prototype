@@ -1,5 +1,9 @@
 'use strict';
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// PostgreSQL DATE values are business dates, not instants. Keep them as YYYY-MM-DD
+// strings so effective dates/due dates cannot drift through JavaScript timezone conversion.
+types.setTypeParser(1082, value => value);
 
 const isProduction = process.env.NODE_ENV === 'production';
 const hasDatabaseUrl = !!process.env.DATABASE_URL;

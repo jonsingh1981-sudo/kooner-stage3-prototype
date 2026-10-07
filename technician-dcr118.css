@@ -1,0 +1,38 @@
+/* DCR-118 — minimum Stage 6 mobile layout correction.
+   Keep the existing Technician nav fixed and tappable, retain the Stage 6 status indicator
+   above it, and reserve safe-area/content space without redesigning Technician Mobile. */
+
+.phone{
+  padding-bottom:calc(108px + env(safe-area-inset-bottom,0px))!important;
+}
+
+.bottom{
+  bottom:0!important;
+  z-index:50!important;
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+
+#stage6Banner{
+  left:50%!important;
+  right:auto!important;
+  bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;
+  transform:translateX(-50%)!important;
+  width:min(500px,100%)!important;
+  max-width:500px!important;
+  z-index:40!important;
+  padding:4px 8px!important;
+  font-size:10px!important;
+  line-height:14px!important;
+  white-space:normal!important;
+  pointer-events:none!important;
+}
+
+.modal{
+  z-index:100!important;
+}
+
+@media(min-width:700px){
+  .phone{padding-bottom:120px!important}
+  .bottom{bottom:12px!important;padding-bottom:0}
+  #stage6Banner{bottom:74px!important}
+}

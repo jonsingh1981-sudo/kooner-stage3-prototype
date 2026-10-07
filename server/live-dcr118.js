@@ -32,7 +32,7 @@ async function promoteDcr118(note){
 async function runDcr118(core,final,evidence,dcr117){
  if((process.env.APP_ENV||'test')!=='stage6-test')return{skipped:true};
  const results=[];const check=(name,ok,detail='')=>{assert(ok,`${name}: ${detail||'failed'}`);results.push({name,ok:true,detail})};
- const html=read('technician.html'),css=read('technician.css'),coreJs=read('technician-core.js');
+ const html=read('technician.html'),baseCss=read('technician.css'),fixCss=read('technician-dcr118.css'),coreJs=read('technician-core.js');
  const primaryBefore=(await query("SELECT w.status,w.financial_status,w.version,w.updated_at FROM work_orders w WHERE w.legacy_ref='WO-10046'")).rows[0];
  assert(primaryBefore,'Primary manual UAT Work Order WO-10046 is missing');
 
@@ -41,18 +41,19 @@ async function runDcr118(core,final,evidence,dcr117){
  check('DCR-116 evidence regression passed',evidence?.failed===0&&evidence?.passed>=12,`${evidence?.passed||0}/${evidence?.passed||0}`);
  check('DCR-117 automated acceptance remains passed',dcr117?.failed===0&&dcr117?.passed>=15,`${dcr117?.passed||0}/${dcr117?.total||0}`);
 
+ check('DCR-118 layout override is loaded after base Technician CSS',html.indexOf('technician-dcr118.css')>html.indexOf('technician.css'),'Technician override stylesheet order');
  check('My Day navigation remains present',html.includes('id="nav-home"')&&html.includes("mobileGo('home')"),'nav-home → home');
  check('Jobs navigation remains present and wired',html.includes('id="nav-jobs"')&&html.includes("mobileGo('jobs')"),'nav-jobs → jobs');
  check('Sync navigation remains present and wired',html.includes('id="nav-sync"')&&html.includes("mobileGo('sync')"),'nav-sync → sync');
  check('More navigation remains present and wired',html.includes('id="nav-more"')&&html.includes("mobileGo('more')"),'nav-more → more');
  check('Navigation handler still exists',/function\s+mobileGo\s*\(/.test(coreJs)||/mobileGo\s*=/.test(coreJs),'technician-core.js');
 
- check('Technician bottom navigation remains fixed',/\.bottom\{[^}]*position:fixed/.test(css),'fixed navigation');
- check('Mobile safe-area is reserved',css.includes('env(safe-area-inset-bottom'),'safe-area-inset-bottom');
- check('Stage 6 indicator is moved above navigation',/#stage6Banner\{[^}]*bottom:calc\(62px \+ env\(safe-area-inset-bottom,0px\)\)!important/.test(css),'banner above 62px navigation');
- check('Stage 6 indicator cannot intercept Technician taps',/#stage6Banner\{[^}]*pointer-events:none/.test(css),'pointer-events none');
- check('Modal layer remains above Stage 6 indicator',/\.modal\{[^}]*z-index:100/.test(css)&&/#stage6Banner\{[^}]*z-index:40!important/.test(css),'modal 100 > indicator 40');
- check('Long Technician content has reserved bottom space',/\.phone\{[^}]*padding-bottom:calc\(108px \+ env\(safe-area-inset-bottom,0px\)\)/.test(css),'content clearance for indicator + navigation');
+ check('Technician bottom navigation remains fixed',/\.bottom\{[^}]*position:fixed/.test(baseCss),'fixed navigation');
+ check('Mobile safe-area is reserved',fixCss.includes('env(safe-area-inset-bottom'),'safe-area-inset-bottom');
+ check('Stage 6 indicator is moved above navigation',/#stage6Banner\{[\s\S]*?bottom:calc\(62px \+ env\(safe-area-inset-bottom,0px\)\)!important/.test(fixCss),'banner above 62px navigation');
+ check('Stage 6 indicator cannot intercept Technician taps',/#stage6Banner\{[\s\S]*?pointer-events:none!important/.test(fixCss),'pointer-events none');
+ check('Modal layer remains above Stage 6 indicator',/\.modal\{[\s\S]*?z-index:100!important/.test(fixCss)&&/#stage6Banner\{[\s\S]*?z-index:40!important/.test(fixCss),'modal 100 > indicator 40');
+ check('Long Technician content has reserved bottom space',/\.phone\{[\s\S]*?padding-bottom:calc\(108px \+ env\(safe-area-inset-bottom,0px\)\)!important/.test(fixCss),'content clearance for indicator + navigation');
 
  const primaryAfter=(await query("SELECT w.status,w.financial_status,w.version,w.updated_at FROM work_orders w WHERE w.legacy_ref='WO-10046'")).rows[0];
  check('WO-10046 was not altered by DCR-118 acceptance',JSON.stringify(primaryAfter)===JSON.stringify(primaryBefore),JSON.stringify(primaryAfter));

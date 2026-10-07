@@ -9,6 +9,7 @@ const {runLiveAcceptance}=require('./live-acceptance');
 const {runFinalAcceptance}=require('./live-acceptance-final');
 const {runUat002Evidence}=require('./live-uat002-evidence');
 const {runDcr117}=require('./live-dcr117');
+const {runDcr118}=require('./live-dcr118');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
 
@@ -26,7 +27,8 @@ async function start(){
    runLiveAcceptance(port)
     .then(core=>runFinalAcceptance(port,core).then(final=>({core,final})))
     .then(({core,final})=>runUat002Evidence(port).then(evidence=>({core,final,evidence})))
-    .then(({core,final,evidence})=>runDcr117(port,core,final,evidence))
+    .then(({core,final,evidence})=>runDcr117(port,core,final,evidence).then(dcr117=>({core,final,evidence,dcr117})))
+    .then(({core,final,evidence,dcr117})=>runDcr118(core,final,evidence,dcr117))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

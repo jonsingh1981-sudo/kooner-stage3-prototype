@@ -6,7 +6,7 @@ const {reconcileRegressionSeed}=require('./regression-seed');
 const {reconcileTestUserPasswords}=require('./test-user-passwords');
 const {reconcileStage6DcrStatus}=require('./stage6-status');
 const {runLiveAcceptance}=require('./live-acceptance');
-const {runExtendedAcceptance}=require('./live-acceptance-extended');
+const {runFinalAcceptance}=require('./live-acceptance-final');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
 
@@ -22,7 +22,7 @@ async function start(){
   console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,regressionSeed,testCredentials:{updated:testCredentials.updated||0,skipped:!!testCredentials.skipped},dcrStatus,environment:process.env.APP_ENV||'test'}));
   if((process.env.APP_ENV||'test')==='stage6-test'){
    runLiveAcceptance(port)
-    .then(core=>runExtendedAcceptance(port,core))
+    .then(core=>runFinalAcceptance(port,core))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

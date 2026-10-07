@@ -41,7 +41,7 @@ async function runExtendedAcceptance(port,coreSummary){
   for(const [term,type] of searchCases){const r=await call('/api/v1/search?q='+encodeURIComponent(term),{session:ops});record(`Backend search returns ${type}`,r.status===200&&r.data.items.some(x=>x.type===type),`${term}: ${JSON.stringify(r.data.items)}`)}
   const paged=await call('/api/v1/work-orders?limit=1&offset=0',{session:ops});record('Backend list pagination limits records',paged.status===200&&paged.data.items.length===1&&paged.data.limit===1,JSON.stringify(paged.data));
 
-  const system=await call('/api/v1/admin/system',{session:admin});record('Admin/System information exposes non-secret platform state',system.status===200&&system.data.database==='PostgreSQL'&&system.data.migration?.version==='004_stage6_evidence_metadata.sql'&&Array.isArray(system.data.deferredIntegrations),JSON.stringify({database:system.data?.database,migration:system.data?.migration,environment:system.data?.environment}));
+  const system=await call('/api/v1/admin/system',{session:admin});record('Admin/System information exposes non-secret platform state',system.status===200&&system.data.database==='PostgreSQL'&&system.data.migration?.version==='005_stage6_labour_review_versioning.sql'&&Array.isArray(system.data.deferredIntegrations),JSON.stringify({database:system.data?.database,migration:system.data?.migration,environment:system.data?.environment}));
   const integrations=await call('/api/v1/integrations',{session:ops});record('Integration Hub remains server-side and Not Connected',integrations.status===200&&integrations.data.items.length>=8&&integrations.data.items.every(x=>x.enabled===false&&/Not Connected/i.test(x.status)),JSON.stringify(integrations.data));
   const retention=await query('SELECT category,verified,status FROM retention_policies ORDER BY category');record('GDPR retention foundation is visible as unverified legal dependency',retention.rows.length>=4&&retention.rows.every(x=>x.verified===false&&/Verification Required/i.test(x.status)),JSON.stringify(retention.rows));
 
@@ -73,7 +73,7 @@ async function runExtendedAcceptance(port,coreSummary){
   let b2=await call('/api/v1/billing/work-orders/WO-S6-ACCEPT/transition',{method:'POST',session:billing,body:{version:b1.data.version,status:'Validated'}});assert(b2.status===200,'Billing Review → Validated failed after authorised labour decision');
   let b3=await call('/api/v1/billing/work-orders/WO-S6-ACCEPT/transition',{method:'POST',session:billing,body:{version:b2.data.version,status:'Ready to Invoice'}});record('Billing progresses through Validated → Ready to Invoice',b3.status===200&&b3.data.financialStatus==='Ready to Invoice',JSON.stringify(b3.data));
 
-  // Customer mileage is append-only. A lower reading needs explanation and never reduces trusted mileage.
+  // Customer mileage is append-only. Lower readings never reduce trusted current mileage.
   await query("DELETE FROM mileage_history WHERE data->>'legacyRef'='MR-PORT-S6-LOW'");
   let cb=await call('/api/v1/bootstrap',{session:cust});let cv=cb.data?.legacyState?.vehicles?.find(x=>x.id==='V1');assert(cb.status===200&&cv,'Customer V1 missing from bootstrap');const trusted=Number(cv.miles);
   let badState=JSON.parse(JSON.stringify(cb.data.legacyState)),badV=badState.vehicles.find(x=>x.id==='V1');badV.mileageRecords=badV.mileageRecords||[];badV.mileageRecords.push({id:'MR-PORT-S6-LOW',mileage:trusted-50,at:new Date().toISOString(),reviewReason:''});

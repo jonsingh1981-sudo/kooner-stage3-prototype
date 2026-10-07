@@ -11,6 +11,7 @@ const {runUat002Evidence}=require('./live-uat002-evidence');
 const {runDcr117}=require('./live-dcr117');
 const {runDcr118}=require('./live-dcr118');
 const {runDcr120}=require('./live-dcr120');
+const {runDcr121}=require('./live-dcr121');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
 
@@ -30,7 +31,8 @@ async function start(){
     .then(({core,final})=>runUat002Evidence(port).then(evidence=>({core,final,evidence})))
     .then(({core,final,evidence})=>runDcr117(port,core,final,evidence).then(dcr117=>({core,final,evidence,dcr117})))
     .then(({core,final,evidence,dcr117})=>runDcr118(core,final,evidence,dcr117).then(dcr118=>({core,final,evidence,dcr117,dcr118})))
-    .then(({core,final,evidence,dcr117,dcr118})=>runDcr120(port,core,final,evidence,dcr117,dcr118))
+    .then(({core,final,evidence,dcr117,dcr118})=>runDcr120(port,core,final,evidence,dcr117,dcr118).then(dcr120=>({core,final,evidence,dcr117,dcr118,dcr120})))
+    .then(({core,final,evidence,dcr117,dcr118,dcr120})=>runDcr121(port,core,final,evidence,dcr117,dcr118,dcr120))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

@@ -33,6 +33,15 @@
   Storage.prototype.removeItem=function(k){if(k==='koonerv1'&&window.KoonerStage6?.active)return;return nativeRemove.call(this,k)};
   function banner(text,kind){const run=()=>{let b=document.getElementById('stage6Banner');if(!b){b=document.createElement('div');b.id='stage6Banner';b.style.cssText='position:fixed;z-index:99999;bottom:0;left:0;right:0;padding:7px 12px;font:12px Arial;text-align:center;background:#efe7f6;color:#3b185b;border-top:1px solid #c7addd';document.body.appendChild(b)}b.textContent=text;if(kind==='bad'){b.style.background='#fee2e2';b.style.color='#7f1d1d'}else if(kind==='warn'){b.style.background='#fef3c7';b.style.color='#78350f'}else{b.style.background='#efe7f6';b.style.color='#3b185b'}};if(document.body)run();else addEventListener('DOMContentLoaded',run)}
   function restoreServerState(){state=JSON.parse(JSON.stringify(lastServerState));window.__koonerStage6State=state;cache(state)}
+  // DCR-121: explicit API actions may return a state that is already committed by the
+  // authoritative server. Accepting that state locally must NOT submit a second compatibility
+  // snapshot. This keeps the Technician on the same job and prevents false browser-first success.
+  function acceptServerState(next,nextVersion){
+    const snapshot=JSON.parse(JSON.stringify(next||{}));
+    state=snapshot;lastServerState=JSON.parse(JSON.stringify(snapshot));window.__koonerStage6State=state;
+    if(Number.isFinite(Number(nextVersion)))version=Number(nextVersion);
+    conflict=false;cache(state);banner(`STAGE 6 TEST • DATABASE/API BACKED • ${interfaceName} • server version ${version}`);return state;
+  }
   async function sendSnapshot(snapshot){
     let r;
     try{r=await fetch('/api/v1/compat/state',{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':auth.csrfToken,'X-Kooner-Interface':interfaceName},body:JSON.stringify({state:snapshot,baseVersion:version})})}
@@ -46,7 +55,7 @@
   function saveState(next){state=next;window.__koonerStage6State=state;const snapshot=JSON.parse(JSON.stringify(next));if(interfaceName==='Technician Mobile'&&next?.mobileDevice?.online===false){cache(snapshot);banner('STAGE 6 • TECHNICIAN OFFLINE — device cache only; pending events must sync to server.','warn');return}queue=queue.then(()=>sendSnapshot(snapshot)).catch(()=>{});}
   Storage.prototype.setItem=function(k,v){if(k==='koonerv1'&&window.KoonerStage6?.active){try{saveState(JSON.parse(v))}catch(e){banner('STAGE 6 • invalid compatibility state was not saved','bad')}return}return nativeSet.call(this,k,v)};
   async function logout(){await fetch('/api/v1/auth/logout',{method:'POST',headers:{'X-CSRF-Token':auth.csrfToken},credentials:'same-origin'});location.replace('/stage6-login.html')}
-  window.KoonerStage6={active:true,mode:'Database/API Backed',authority:'PostgreSQL/API',user:auth.user,csrfToken:auth.csrfToken,get stateVersion(){return version},saveState,logout,refresh:()=>location.reload(),interfaceName};
+  window.KoonerStage6={active:true,mode:'Database/API Backed',authority:'PostgreSQL/API',user:auth.user,csrfToken:auth.csrfToken,get stateVersion(){return version},saveState,acceptServerState,logout,refresh:()=>location.reload(),interfaceName};
   banner(`STAGE 6 TEST • DATABASE/API BACKED • ${interfaceName} • ${auth.user.name}`);
   addEventListener('DOMContentLoaded',()=>{if(interfaceName==='Customer Portal'){const p=document.getElementById('persona');if(p){p.disabled=true;p.title='Stage 6 authenticated user – persona switching is disabled'}}});
   setInterval(async()=>{if(conflict||document.hidden)return;try{const r=await fetch('/api/v1/changes?since='+version,{credentials:'same-origin'});if(r.status===401||r.status===403){location.replace('/stage6-login.html');return}if(!r.ok){unavailable();return}const x=await r.json();if(x.changed)banner(`STAGE 6 • NEW SERVER DATA AVAILABLE (v${x.version}) — refresh to load it.`,'warn')}catch{unavailable()}},15000);

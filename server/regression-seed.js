@@ -50,6 +50,11 @@ async function reconcileRegressionSeed(){
         VALUES($1,'Fixed Maintenance','October 2026 approved fixed-maintenance regression',492.10,'FMP-OCT-2026','{"regression":true,"period":"2026-10"}'::jsonb)`,[invoice.id]);
       await c.query("UPDATE invoices SET net=492.10,vat=98.42,gross=590.52,data=jsonb_set(COALESCE(data,'{}'::jsonb),'{regression}', 'true'::jsonb,true) WHERE id=$1",[invoice.id]);
     }
+
+    // Acceptance idempotency keys are test fixtures, not business records. Reset them
+    // before each deploy so the live acceptance test exercises the mutation again.
+    await c.query("DELETE FROM idempotency_keys WHERE key IN ('S6-EST-APPROVE','S6-EST-REAPPROVE')");
+
     return {fixedMaintenanceRegression:'£492.10',vehiclePlan:'FMP-C1-VEH',groupPlan:'FMP-C1-GRP'};
   });
 }

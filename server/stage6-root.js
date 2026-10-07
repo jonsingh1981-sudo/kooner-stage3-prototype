@@ -46,6 +46,10 @@ app.use(require('./stage6-evidence-router'));
 // DCR-120 single-active Technician guard must run before both the Smart Close routes and
 // the compatibility/direct Attendance mutation routes later in the Stage 6 gateway.
 app.use(require('./stage6-technician-journey-guard'));
+// DCR-122 invalidates pre-DCR-122 pre-filled registration confirmations as journey proof.
+// This router must run before the generic journey/smart-close routes so the authoritative
+// server requires a new blank-input manual physical registration entry.
+app.use(require('./stage6-registration-integrity-router'));
 // DCR-121: journey actions are explicit server-authoritative commands. They must execute
 // before the compatibility gateway so the UI never advances on browser state alone.
 app.use(require('./stage6-technician-journey-router'));

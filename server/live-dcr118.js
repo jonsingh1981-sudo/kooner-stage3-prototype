@@ -24,7 +24,7 @@ async function promoteDcr118(note){
 
   const r117=await c.query("SELECT id,status,retest_result FROM dcr_items WHERE dcr_ref='DCR-117' FOR UPDATE");
   assert(r117.rowCount===1,'DCR-117 missing');
-  const d117=r117.rows[0],manualCorrection=/Manual Test 1 Failed|Correction Required/i.test(String(d117.status||''))||/Manual Test 1 FAIL/i.test(String(d117.retest_result||''));
+  const d117=r117.rows[0],manualCorrection=/Manual Test 1 Failed|Correction Required|blocked by Technician journey/i.test(String(d117.status||''))||/Manual Test 1 FAIL|blocked by DCR-121/i.test(String(d117.retest_result||''));
   if(manualCorrection)return{dcr118:target118,dcr117:d117.status,manualPassed,preservedDcr117Correction:true};
   const target117=manualPassed?'Ready to Test':'Ready to Test – Manual UAT Blocked by DCR-118';
   const retest117=manualPassed

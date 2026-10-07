@@ -12,37 +12,10 @@ const {runDcr117}=require('./live-dcr117');
 const {runDcr118}=require('./live-dcr118');
 const {runDcr120}=require('./live-dcr120');
 const {runDcr121}=require('./live-dcr121');
+const {runDcr122}=require('./live-dcr122');
+const {prepareLegacyDcrRegressionStatuses,restoreDcrRegressionStatuses}=require('./stage6-uat-regression-status');
 const app=require('./stage6-root');
-const {pool,assertDatabaseConfigured,tx}=require('./db');
-
-async function preserveManualDcr121Pass(){
- return tx(async c=>{
-  const d121=(await c.query("SELECT id,status,retest_result FROM dcr_items WHERE dcr_ref='DCR-121' FOR UPDATE")).rows[0];
-  const manualPassed=!!d121&&d121.status==='Completed'&&/Manual Retest PASS/i.test(String(d121.retest_result||''));
-  if(!manualPassed)return{manualPassed:false};
-
-  const desired=[
-   ['DCR-120','Ready to Test – Manual UAT resumed','DCR-121 manual retest PASS confirmed on WO-10046 / AB26 CDE. DCR-120 manual Technician journey UAT is resumed one action at a time; next action is START TRAVEL / EN ROUTE.'],
-   ['DCR-117','Ready to Test – still dependent on successful completion of corrected Technician journey test','DCR-121 manual retest PASS confirmed. DCR-117 remains Ready to Test but is still dependent on successful completion of the corrected DCR-120 Technician journey test.']
-  ];
-  const out={manualPassed:true,dcr121:'Completed'};
-  for(const [ref,target,retest] of desired){
-   const d=(await c.query('SELECT id,status FROM dcr_items WHERE dcr_ref=$1 FOR UPDATE',[ref])).rows[0];
-   if(!d)throw new Error(`${ref} missing while recording DCR-121 manual PASS`);
-   await c.query('UPDATE dcr_items SET status=$2,retest_result=$3,updated_at=now() WHERE id=$1',[d.id,target,retest]);
-   if(d.status!==target)await c.query('INSERT INTO dcr_history(dcr_id,from_status,to_status,note,changed_by) VALUES($1,$2,$3,$4,$5)',[
-    d.id,d.status,target,
-    ref==='DCR-120'?'DCR-121 manual retest passed. Resume DCR-120 manual UAT one Technician journey action at a time on WO-10046 / AB26 CDE.':'DCR-121 manual retest passed. DCR-117 remains dependent on successful completion of the corrected Technician journey test.',
-    'Jon – Stage 6 UAT'
-   ]);
-   out[ref==='DCR-120'?'dcr120':'dcr117']=target;
-  }
-  const d119=(await c.query("SELECT status FROM dcr_items WHERE dcr_ref='DCR-119'")).rows[0];
-  if(d119?.status!=='Agreed – Awaiting Build')throw new Error('DCR-119 must remain Agreed – Awaiting Build / NOT built');
-  out.dcr119=d119.status;
-  return out
- })
-}
+const {pool,assertDatabaseConfigured}=require('./db');
 
 async function start(){
  assertDatabaseConfigured();
@@ -58,14 +31,19 @@ async function start(){
    runLiveAcceptance(port)
     .then(core=>runFinalAcceptance(port,core).then(final=>({core,final})))
     .then(({core,final})=>runUat002Evidence(port).then(evidence=>({core,final,evidence})))
-    .then(({core,final,evidence})=>runDcr117(port,core,final,evidence).then(dcr117=>({core,final,evidence,dcr117})))
-    .then(({core,final,evidence,dcr117})=>runDcr118(core,final,evidence,dcr117).then(dcr118=>({core,final,evidence,dcr117,dcr118})))
-    .then(({core,final,evidence,dcr117,dcr118})=>runDcr120(port,core,final,evidence,dcr117,dcr118).then(dcr120=>({core,final,evidence,dcr117,dcr118,dcr120})))
-    .then(async({core,final,evidence,dcr117,dcr118,dcr120})=>{
-      const manual=await preserveManualDcr121Pass();
-      if(manual.manualPassed){console.log(JSON.stringify({level:'info',event:'stage6_dcr121_manual_pass_preserved',...manual}));return manual}
-      return runDcr121(port,core,final,evidence,dcr117,dcr118,dcr120)
+    .then(async({core,final,evidence})=>{
+      const snapshot=await prepareLegacyDcrRegressionStatuses();
+      try{
+       const dcr117=await runDcr117(port,core,final,evidence);
+       const dcr118=await runDcr118(core,final,evidence,dcr117);
+       const dcr120=await runDcr120(port,core,final,evidence,dcr117,dcr118);
+       const dcr121=await runDcr121(port,core,final,evidence,dcr117,dcr118,dcr120);
+       return{core,final,evidence,dcr117,dcr118,dcr120,dcr121};
+      }finally{
+       await restoreDcrRegressionStatuses(snapshot);
+      }
     })
+    .then(context=>runDcr122(port,context))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

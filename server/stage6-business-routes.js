@@ -31,7 +31,7 @@ router.post('/api/v1/billing/labour-reviews/:id/decision',requireAuth,requirePer
   const reason=text(req.body.reason,3000),proposed=Number(lr.proposed_billable_minutes||0),needsReview=!!lr.data?.chargeabilityReviewRequired;
   if((mins!==proposed||needsReview)&&!reason)fail(422,'VALIDATION','Override / review reason is required');
   const decision=mins===proposed?'Approved by Operations':'Approved Override';
-  await c.query(`UPDATE technician_labour_reviews SET approved_billable_minutes=$2,status='Approved',reviewer_user_id=$3,reviewed_at=now(),override_reason=$4,data=jsonb_set(COALESCE(data,'{}'::jsonb),'{commercialDecision}',to_jsonb($5::text),true),version=version+1 WHERE id=$1`,[lr.id,mins,req.user.id,reason||null,decision]);
+  await c.query(`UPDATE technician_labour_reviews SET approved_billable_minutes=$2,status='Approved',reviewer_user_id=$3,reviewed_at=now(),override_reason=$4,data=jsonb_set(COALESCE(data,'{}'::jsonb),'{commercialDecision}',to_jsonb($5::text),true),version=version+1,updated_at=now() WHERE id=$1`,[lr.id,mins,req.user.id,reason||null,decision]);
   await B.audit(c,req,'TechnicianLabourReview',lr.id,null,'Technician labour commercial review',{approvedBillableMinutes:lr.approved_billable_minutes,status:lr.status},{approvedBillableMinutes:mins,status:'Approved',commercialDecision:decision,reviewer:req.user.display_name},reason||'Approved at proposed commercial treatment');
   const sv=await bumpStateVersion(c);return{id:String(lr.id),workOrder:lr.work_order_ref,approvedBillableMinutes:mins,status:'Approved',commercialDecision:decision,reviewer:req.user.display_name,version:Number(lr.version)+1,stateVersion:sv}
  });res.json(result)

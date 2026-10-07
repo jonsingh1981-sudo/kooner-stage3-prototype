@@ -22,6 +22,7 @@ state.buildLegacyState=async function stage6VersionedBuild(user){
 };
 
 const app=express();
+app.use(require('./stage6-rate-limit-router'));
 app.use('/api/v1/sync',require('./stage6-sync-security-router'));
 app.use('/api/v1/sync',require('./stage6-sync-router'));
 app.use(require('./stage6-search-router'));

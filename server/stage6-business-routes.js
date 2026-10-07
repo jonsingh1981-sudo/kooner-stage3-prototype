@@ -70,5 +70,5 @@ router.put('/api/v1/compat/state',requireAuth,csrfRequired,async(req,res,next)=>
  next()
 }catch(e){next(e)}});
 
-router.use((err,req,res,next)=>{const status=err.status||500;res.status(status).json({error:err.code||'SERVER_ERROR',message:status>=500?'Unexpected Stage 6 business-rule error':err.message,requestId:req.id||null,...(err.serverVersion?{serverVersion:err.serverVersion}:{})})});
+router.use((err,req,res,next)=>{const status=err.status||500;console.error(JSON.stringify({level:'error',event:'stage6_business_route_error',path:req.originalUrl,status,code:err.code||null,message:err.message,detail:(process.env.APP_ENV||'test')==='stage6-test'?err.stack:undefined}));res.status(status).json({error:err.code||'SERVER_ERROR',message:status>=500?'Unexpected Stage 6 business-rule error':err.message,requestId:req.id||null,...(err.serverVersion?{serverVersion:err.serverVersion}:{})})});
 module.exports=router;

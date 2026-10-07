@@ -5,7 +5,7 @@
   "description": "Kooner Fleet Management System - Stage 6 shared platform foundation",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/start.js",
+    "start": "npm test && node server/start.js",
     "migrate": "node server/migrate.js",
     "seed": "node server/seed.js",
     "reset:test": "node server/reset-test.js",

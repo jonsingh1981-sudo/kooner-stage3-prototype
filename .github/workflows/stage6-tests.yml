@@ -6,13 +6,11 @@ on:
     paths:
       - 'server/**'
       - 'package.json'
-      - 'package-lock.json'
       - '.github/workflows/stage6-tests.yml'
   pull_request:
     paths:
       - 'server/**'
       - 'package.json'
-      - 'package-lock.json'
 
 permissions:
   contents: read
@@ -27,8 +25,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm install --omit=dev
       - name: Run Stage 6 tests
         run: npm test

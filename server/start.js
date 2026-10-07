@@ -13,6 +13,7 @@ const {runDcr118}=require('./live-dcr118');
 const {runDcr120}=require('./live-dcr120');
 const {runDcr121}=require('./live-dcr121');
 const {runDcr122}=require('./live-dcr122');
+const {runDcr122IntegrityGuard}=require('./live-dcr122-integrity-guard');
 const {prepareLegacyDcrRegressionStatuses,restoreDcrRegressionStatuses}=require('./stage6-uat-regression-status');
 const app=require('./stage6-root');
 const {pool,assertDatabaseConfigured}=require('./db');
@@ -44,6 +45,7 @@ async function start(){
       }
     })
     .then(context=>runDcr122(port,context))
+    .then(dcr122=>runDcr122IntegrityGuard(port,dcr122))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });

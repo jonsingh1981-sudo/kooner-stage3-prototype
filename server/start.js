@@ -2,6 +2,7 @@
 require('./state-syntax-hotfix');
 const {runMigrations}=require('./migrate');
 const {seed}=require('./seed');
+const {reconcileRegressionSeed}=require('./regression-seed');
 const {reconcileStage6DcrStatus}=require('./stage6-status');
 const {runLiveAcceptance}=require('./live-acceptance');
 const app=require('./stage6-root');
@@ -11,10 +12,11 @@ async function start(){
  assertDatabaseConfigured();
  const migration=await runMigrations();
  await seed();
+ const regressionSeed=await reconcileRegressionSeed();
  const dcrStatus=await reconcileStage6DcrStatus();
  const port=Number(process.env.PORT||10000);
  const server=app.listen(port,'0.0.0.0',()=>{
-  console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,dcrStatus,environment:process.env.APP_ENV||'test'}));
+  console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,regressionSeed,dcrStatus,environment:process.env.APP_ENV||'test'}));
   if((process.env.APP_ENV||'test')==='stage6-test'){
    runLiveAcceptance(port).catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_live_acceptance_failed',message:e.message,stack:e.stack})));
   }

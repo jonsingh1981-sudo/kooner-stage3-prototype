@@ -28,6 +28,7 @@ app.use('/api/v1/sync',require('./stage6-sync-security-router'));
 app.use('/api/v1/sync',require('./stage6-sync-router'));
 app.use(require('./stage6-search-router'));
 app.use(require('./stage6-import-router'));
+app.use(require('./stage6-evidence-router'));
 app.use(require('./stage6-business-routes'));
 app.use(require('./stage6-customer-mileage-router'));
 // The Stage 6 acceptance suites run from localhost during deployment. Give each controlled

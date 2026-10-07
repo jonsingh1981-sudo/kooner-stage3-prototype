@@ -1,7 +1,7 @@
 'use strict';
 const express=require('express');
 const cookieParser=require('cookie-parser');
-const {tx,bumpStateVersion}=require('./db');
+const {tx,bumpStateVersion,getStateVersion}=require('./db');
 const {authMiddleware,requireAuth,csrfRequired,isInternal}=require('./auth');
 const B=require('./business');
 
@@ -53,15 +53,20 @@ router.post('/api/v1/technician-journey/:workOrder/:attendance/action',requireAu
  const action=txt(req.body?.action,40);if(!['accept','en_route','on_site','registration','safety','start_work'].includes(action))fail(422,'VALIDATION','Choose a valid Technician journey action');
  const result=await tx(async c=>{
   let ctx=await loadContext(c,req.user,txt(req.params.workOrder,120),txt(req.params.attendance,120),{lock:true});
-  if(satisfied(ctx,action)){const sv=await bumpStateVersion(c);return response(ctx,action,true,sv)}
+  if(satisfied(ctx,action)){const sv=await getStateVersion(c);return response(ctx,action,true,sv)}
   const expected=nextAction(ctx);if(expected.code!==action)fail(422,'OUT_OF_SEQUENCE',`The next required action is ${expected.label}.`,{nextJourneyAction:expected});
   const now=new Date(),d={...(ctx.attendance_data||{})},j={...(d.journey||{})};
   if(action==='accept'){
-   if(ctx.attendance_status==='Planned'){B.assertTransition('attendance','Planned','Dispatched');await c.query("UPDATE attendances SET status='Dispatched',version=version+1,updated_at=now() WHERE id=$1",[ctx.attendance_id]);ctx.attendance_status='Dispatched'}
+   const originalStatus=ctx.attendance_status;
+   if(originalStatus==='Planned'){
+    B.assertTransition('attendance','Planned','Dispatched');
+    await c.query("UPDATE attendances SET status='Dispatched',version=version+1,updated_at=now() WHERE id=$1",[ctx.attendance_id]);
+    ctx.attendance_status='Dispatched';
+   }
    B.assertTransition('attendance',ctx.attendance_status,'Accepted');j.acceptedAt=j.acceptedAt||now.toISOString();j.acceptedBy=req.user.id;j.acceptedByName=req.user.display_name;d.journey=j;
    await c.query("UPDATE attendances SET status='Accepted',data=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",[ctx.attendance_id,JSON.stringify(d)]);
    await c.query("UPDATE work_orders SET current_owner='Technician',next_action='Technician travel / attend',version=version+1,updated_at=now() WHERE id=$1",[ctx.work_order_id]);
-   await B.audit(c,req,'Attendance',ctx.attendance_id,ctx.attendance_ref,'Technician Journey – Accept Job',{status:ctx.attendance_status==='Dispatched'?'Planned':ctx.attendance_status},{status:'Accepted',acceptedAt:j.acceptedAt},ctx.attendance_status==='Dispatched'?'Validated compound transition Planned → Dispatched → Accepted':'Technician accepted assigned Attendance');
+   await B.audit(c,req,'Attendance',ctx.attendance_id,ctx.attendance_ref,'Technician Journey – Accept Job',{status:originalStatus},{status:'Accepted',acceptedAt:j.acceptedAt},originalStatus==='Planned'?'Validated compound transition Planned → Dispatched → Accepted':'Technician accepted assigned Attendance');
   }else if(action==='en_route'){
    await enforceSingleActive(c,ctx);B.assertTransition('attendance',ctx.attendance_status,'En Route');j.enRouteAt=j.enRouteAt||now.toISOString();j.enRouteBy=req.user.id;d.journey=j;
    await c.query("UPDATE attendances SET status='En Route',data=$2::jsonb,version=version+1,updated_at=now() WHERE id=$1",[ctx.attendance_id,JSON.stringify(d)]);

@@ -32,18 +32,16 @@ async function technicianContext(c,user,workOrderRef,attendanceRef,taskRef){
 
 async function technicianCanAccessEvidence(c,user,evidenceRef,{lock=false}={}){
   const q=`SELECT e.*,w.legacy_ref work_order_ref,a.legacy_ref attendance_ref,t.legacy_ref task_ref,
-    tech.id assigned_technician_id
+    EXISTS(SELECT 1 FROM attendance_resource_assignments ara JOIN technicians tech ON tech.id=ara.technician_id WHERE ara.attendance_id=e.attendance_id AND tech.user_id=$2) assigned_to_user
     FROM evidence_metadata e
     JOIN work_orders w ON w.id=e.work_order_id
     LEFT JOIN attendances a ON a.id=e.attendance_id
     LEFT JOIN tasks t ON t.id=e.task_id
-    LEFT JOIN attendance_resource_assignments ara ON ara.attendance_id=e.attendance_id
-    LEFT JOIN technicians tech ON tech.id=ara.technician_id AND tech.user_id=$2
     WHERE e.legacy_ref=$1 ${lock?'FOR UPDATE OF e':''}`;
   const r=await c.query(q,[evidenceRef,user.id]);
   if(!r.rowCount)fail(404,'NOT_FOUND','Evidence not found');
   const e=r.rows[0];
-  if(!e.assigned_technician_id)fail(403,'ACCESS_DENIED','Evidence Attendance is not assigned to this Technician');
+  if(!e.assigned_to_user)fail(403,'ACCESS_DENIED','Evidence Attendance is not assigned to this Technician');
   return e;
 }
 

@@ -20,7 +20,7 @@ function canonicalEvidence(v){
   let s=txt(v,120).toLowerCase().replace(/component/g,'').replace(/customer-specific/g,'customer specific').replace(/[^a-z0-9]+/g,' ').trim();
   const map={
     'fault defect':'fault defect','fault':'fault defect','defect':'fault defect',
-    'before repair':'before repair','after repair':'after repair',
+    'before repair':'before repair','after repair':'after repair','damage':'damage',
     'parts fitted':'parts fitted','completion':'completion','registration':'registration',
     'meter diagnostic reading':'meter diagnostic reading','diagnostic reading':'meter diagnostic reading'
   };
@@ -28,21 +28,30 @@ function canonicalEvidence(v){
 }
 function evidenceLabel(v){
   const c=canonicalEvidence(v);
-  return ({'fault defect':'Fault / Defect','before repair':'Before Repair','after repair':'After Repair','parts fitted':'Parts Fitted','completion':'Completion','registration':'Registration','meter diagnostic reading':'Meter / Diagnostic Reading'})[c]||txt(v,120)||'Required Evidence';
+  return ({'fault defect':'Fault / Defect','before repair':'Before Repair','after repair':'After Repair','damage':'Damage','parts fitted':'Parts Fitted','completion':'Completion','registration':'Registration','meter diagnostic reading':'Meter / Diagnostic Reading'})[c]||txt(v,120)||'Required Evidence';
 }
 function fallbackTaskRule(t){
-  if(t.legacy_ref==='MOB-TK41')return{requires:['notes','fault','cause','measurement'],anyEvidence:['Fault / Defect','Meter / Diagnostic Reading'],requiredEvidence:[]};
-  if(t.task_type==='Diagnosis')return{requires:['notes','fault','cause'],anyEvidence:['Fault / Defect'],requiredEvidence:[]};
-  if(t.task_type==='Repair')return{requires:['notes'],anyEvidence:['After Repair','Parts Fitted','Completion'],requiredEvidence:[]};
-  if(t.task_type==='Service')return{requires:['notes','mileage'],anyEvidence:['Completion','Meter / Diagnostic Reading'],requiredEvidence:[]};
-  if(t.task_type==='Inspection')return{requires:['notes'],anyEvidence:['Fault / Defect','Completion'],requiredEvidence:[]};
+  // Completion fields retain the approved Stage 4 task controls. Photo requirements are
+  // deliberately NOT invented here: DCR-120 requires evidence to come from configured
+  // Customer / Contract / Workflow / Task rules only.
+  if(t.legacy_ref==='MOB-TK41')return{requires:['notes','fault','cause','measurement'],anyEvidence:[],requiredEvidence:[]};
+  if(t.task_type==='Diagnosis')return{requires:['notes','fault','cause'],anyEvidence:[],requiredEvidence:[]};
+  if(t.task_type==='Repair')return{requires:['notes'],anyEvidence:[],requiredEvidence:[]};
+  if(t.task_type==='Service')return{requires:['notes','mileage'],anyEvidence:[],requiredEvidence:[]};
+  if(t.task_type==='Inspection')return{requires:['notes'],anyEvidence:[],requiredEvidence:[]};
   return{requires:['notes'],anyEvidence:[],requiredEvidence:[]};
 }
+function arr(v){return Array.isArray(v)?v:[]}
+function evidenceTypes(v){
+  return arr(v).map(x=>typeof x==='string'?x:(x&&x.required!==false?(x.evidenceType||x.type||x.name||''):'')).map(x=>txt(x,120)).filter(Boolean);
+}
 function taskRule(t){
-  const base=fallbackTaskRule(t),cr=t.completion_rules||{},er=t.evidence_rules||{};
+  const base=fallbackTaskRule(t),td=t.data||{},cr=t.completion_rules||td.completionRules||td.completion_rules||{};
+  const erCandidates=[td.evidenceRules,td.evidence_rules,t.evidence_rules].filter(x=>x&&typeof x==='object');
+  const er=erCandidates.length?Object.assign({},...erCandidates):{};
   const requires=Array.isArray(cr.requires)?cr.requires:base.requires;
-  const anyEvidence=Array.isArray(er.anyOf)?er.anyOf:Array.isArray(er.evidenceAny)?er.evidenceAny:base.anyEvidence;
-  const requiredEvidence=Array.isArray(er.requiredTypes)?er.requiredTypes:Array.isArray(er.required)?er.required:base.requiredEvidence;
+  const anyEvidence=evidenceTypes(er.anyOf||er.evidenceAny||base.anyEvidence);
+  const requiredEvidence=evidenceTypes(er.requiredTypes||er.required||td.requiredEvidence||td.requiredPhotos||base.requiredEvidence);
   return{requires,anyEvidence,requiredEvidence};
 }
 function answerMissing(rule,answers){
@@ -64,8 +73,10 @@ async function loadContext(c,user,woRef,attendanceRef,{lock=false}={}){
     a.id attendance_id,a.legacy_ref attendance_ref,a.attendance_type,a.status attendance_status,a.arrived_at,a.departed_at,a.outcome,a.data attendance_data,
     tech.id technician_id,tech.legacy_ref technician_ref,tech.role_name,
     v.registration,
+    cust.data customer_data,
     ct.data contract_data
     FROM work_orders w
+    JOIN customers cust ON cust.id=w.customer_id
     JOIN vehicles v ON v.id=w.vehicle_id
     JOIN attendances a ON a.work_order_id=w.id AND a.legacy_ref=$2
     JOIN attendance_resource_assignments ara ON ara.attendance_id=a.id
@@ -81,8 +92,10 @@ async function loadTasks(c,workOrderId){
     WHERE t.work_order_id=$1 ORDER BY t.created_at,t.legacy_ref`,[workOrderId])).rows;
 }
 async function loadEvidence(c,workOrderId){
+  // Only active, server-confirmed media can satisfy a mandatory evidence gate.
   return (await c.query(`SELECT e.legacy_ref,e.evidence_type,e.task_id,e.attendance_id,e.storage_status
-    FROM evidence_metadata e WHERE e.work_order_id=$1 AND e.removed_at IS NULL`,[workOrderId])).rows;
+    FROM evidence_metadata e
+    WHERE e.work_order_id=$1 AND e.removed_at IS NULL AND e.content_data IS NOT NULL AND e.storage_status LIKE 'Stored%'`,[workOrderId])).rows;
 }
 function journeyState(ctx){
   const d=ctx.attendance_data||{},j=d.journey||{},s=ctx.attendance_status;
@@ -99,11 +112,24 @@ function journeyPolicy(ctx){
   const remote=/remote support/i.test(ctx.attendance_type||''),workshop=/workshop/i.test(ctx.role_name||'');
   return{remote,workshop,requiresEnRoute:!remote&&!workshop,requiresOnSite:!remote,requiresRegistration:!remote,requiresSafety:!remote};
 }
+function journeyNext(ctx){
+  const p=journeyPolicy(ctx),j=journeyState(ctx);
+  if(!j.accepted)return{code:'accept',label:'Accept Job',stage:'Assigned'};
+  if(p.requiresEnRoute&&!j.enRoute)return{code:'en_route',label:'Start Travel / En Route',stage:'Accepted'};
+  if(p.requiresOnSite&&!j.onSite)return{code:'on_site',label:'Arrived On Site',stage:p.requiresEnRoute?'En Route':'Accepted'};
+  if(p.requiresRegistration&&!j.registration)return{code:'registration',label:'Confirm Registration',stage:'On Site'};
+  if(p.requiresSafety&&!j.safety)return{code:'safety',label:'Complete Safety Check',stage:'On Site'};
+  if(!j.workStarted)return{code:'start_work',label:p.remote?'Start Remote Support':'Start Work',stage:'On Site'};
+  return{code:'finish_job',label:'FINISH JOB',stage:'Working'};
+}
+function finishAvailable(ctx){const j=journeyState(ctx);return j.workStarted&&ctx.attendance_status==='In Progress'}
 function signatureRequired(ctx){
-  const w=ctx.work_order_data||{},c=ctx.contract_data||{};
-  return bool(w.signatureRequired)||bool(w.workflow?.signatureRequired)||bool(c.signatureRequired)||bool(c.workflow?.signatureRequired);
+  const w=ctx.work_order_data||{},c=ctx.contract_data||{},cu=ctx.customer_data||{};
+  return bool(w.signatureRequired)||bool(w.workflow?.signatureRequired)||bool(c.signatureRequired)||bool(c.workflow?.signatureRequired)||bool(cu.signatureRequired)||bool(cu.workflow?.signatureRequired);
 }
 function basicMissing(ctx){
+  // Retained for controlled follow-up validation only. It is deliberately NOT included
+  // in FINISH JOB readiness after DCR-120.
   const p=journeyPolicy(ctx),j=journeyState(ctx),m=[];
   if(!j.accepted)m.push({code:'accept',label:'Accept Job'});
   if(p.requiresEnRoute&&!j.enRoute)m.push({code:'en_route',label:'Start Travel / En Route'});
@@ -113,8 +139,17 @@ function basicMissing(ctx){
   if(!j.workStarted)m.push({code:'start_work',label:p.remote?'Start Remote Support':'Start Work'});
   return m;
 }
+function configuredEvidence(ctx){
+  const sources=[ctx.customer_data||{},ctx.contract_data||{},ctx.work_order_data||{},ctx.attendance_data||{}],out=[];
+  for(const x of sources){
+    out.push(...evidenceTypes(x.requiredEvidence),...evidenceTypes(x.requiredPhotos),...evidenceTypes(x.photoRequirements));
+    const wf=x.workflow||{};out.push(...evidenceTypes(wf.requiredEvidence),...evidenceTypes(wf.requiredPhotos),...evidenceTypes(wf.photoRequirements));
+  }
+  return [...new Map(out.map(x=>[canonicalEvidence(x),evidenceLabel(x)])).values()];
+}
 function taskAndEvidenceMissing(ctx,tasks,evidence){
-  const m=[];
+  const m=[],seen=new Set();
+  const addEvidence=(label,type,taskRef=null,choices=null)=>{const k=`${taskRef||'attendance'}|${canonicalEvidence(type)}`;if(seen.has(k))return;seen.add(k);m.push({code:'evidence',label,taskRef:taskRef||undefined,evidenceType:evidenceLabel(type),evidenceChoices:choices||undefined})};
   const attEvidence=evidence.filter(e=>String(e.attendance_id||'')===String(ctx.attendance_id));
   for(const t of tasks.filter(x=>x.required!==false)){
     if(!terminalTask(t.status)){
@@ -125,25 +160,29 @@ function taskAndEvidenceMissing(ctx,tasks,evidence){
     const rule=taskRule(t),answers=t.data?.mobileAnswers||{},am=answerMissing(rule,answers);
     if(am.length){m.push({code:'task',label:`Finish: ${t.description}`,taskRef:t.legacy_ref,detail:`Missing ${am.join(', ')}`});continue}
     const linked=attEvidence.filter(e=>String(e.task_id||'')===String(t.id)).map(e=>canonicalEvidence(e.evidence_type));
-    for(const req of rule.requiredEvidence||[]){if(!linked.includes(canonicalEvidence(req)))m.push({code:'evidence',label:`Add required photo: ${evidenceLabel(req)}`,taskRef:t.legacy_ref,evidenceType:evidenceLabel(req)})}
+    for(const req of rule.requiredEvidence||[]){if(!linked.includes(canonicalEvidence(req)))addEvidence(`Take ${evidenceLabel(req)} Photo`,req,t.legacy_ref)}
     if((rule.anyEvidence||[]).length&&!rule.anyEvidence.some(x=>linked.includes(canonicalEvidence(x)))){
-      const first=rule.anyEvidence[0];m.push({code:'evidence',label:`Add required photo for ${t.description}`,taskRef:t.legacy_ref,evidenceType:evidenceLabel(first),evidenceChoices:rule.anyEvidence.map(evidenceLabel)});
+      const first=rule.anyEvidence[0];addEvidence(`Take ${evidenceLabel(first)} Photo`,first,t.legacy_ref,rule.anyEvidence.map(evidenceLabel));
     }
   }
-  const required=(ctx.work_order_data?.requiredEvidence||ctx.work_order_data?.workflow?.requiredEvidence||[]);
-  if(Array.isArray(required)){
-    const all=attEvidence.map(e=>canonicalEvidence(e.evidence_type));
-    for(const req of required){if(!all.includes(canonicalEvidence(req)))m.push({code:'evidence',label:`Add required photo: ${evidenceLabel(req)}`,evidenceType:evidenceLabel(req)})}
-  }
+  const all=attEvidence.map(e=>canonicalEvidence(e.evidence_type));
+  for(const req of configuredEvidence(ctx)){if(!all.includes(canonicalEvidence(req)))addEvidence(`Take ${evidenceLabel(req)} Photo`,req)}
   return m;
 }
 async function readiness(c,ctx){
+  const next=journeyNext(ctx),canFinish=finishAvailable(ctx);
+  if(!canFinish)return{
+    workOrder:ctx.work_order_ref,attendance:ctx.attendance_ref,registration:ctx.registration,
+    attendanceStatus:ctx.attendance_status,workOrderStatus:ctx.work_order_status,
+    finishAvailable:false,nextJourneyAction:next,missing:[],ready:false,taskCount:0,evidenceCount:0
+  };
   const tasks=await loadTasks(c,ctx.work_order_id),evidence=await loadEvidence(c,ctx.work_order_id);
-  const missing=basicMissing(ctx).concat(taskAndEvidenceMissing(ctx,tasks,evidence));
+  const missing=taskAndEvidenceMissing(ctx,tasks,evidence);
   if(signatureRequired(ctx))missing.push({code:'signature',label:'Customer Signature'});
   return{
     workOrder:ctx.work_order_ref,attendance:ctx.attendance_ref,registration:ctx.registration,
     attendanceStatus:ctx.attendance_status,workOrderStatus:ctx.work_order_status,
+    finishAvailable:true,nextJourneyAction:next,
     missing,ready:missing.length===0,
     taskCount:tasks.length,evidenceCount:evidence.filter(e=>String(e.attendance_id||'')===String(ctx.attendance_id)).length
   };
@@ -216,6 +255,12 @@ async function updateWo(c,ctx,status,owner,next){
   await c.query('UPDATE work_orders SET status=$2,current_owner=$3,next_action=$4,version=version+1,updated_at=now() WHERE id=$1',[ctx.work_order_id,status,owner,next]);
 }
 
+router.get('/api/v1/technician-close/:workOrder/:attendance/journey',requireAuth,async(req,res,next)=>{try{
+  if(!isTechnician(req.user))fail(403,'ACCESS_DENIED','Technician role required');
+  const out=await tx(async c=>{const ctx=await loadContext(c,req.user,txt(req.params.workOrder,120),txt(req.params.attendance,120));return{workOrder:ctx.work_order_ref,attendance:ctx.attendance_ref,registration:ctx.registration,attendanceStatus:ctx.attendance_status,nextAction:journeyNext(ctx),finishAvailable:finishAvailable(ctx)}});
+  res.json(out);
+}catch(e){next(e)}});
+
 router.get('/api/v1/technician-close/:workOrder/:attendance/readiness',requireAuth,async(req,res,next)=>{try{
   if(!isTechnician(req.user))fail(403,'ACCESS_DENIED','Technician role required');
   const out=await tx(async c=>{const ctx=await loadContext(c,req.user,txt(req.params.workOrder,120),txt(req.params.attendance,120));return readiness(c,ctx)});
@@ -231,6 +276,7 @@ router.post('/api/v1/technician-close/:workOrder/:attendance/finish',requireAuth
     if(!activeAttendance(ctx.attendance_status))return{replayed:true,attendanceStatus:ctx.attendance_status,workOrderStatus:ctx.work_order_status,workOrder:ctx.work_order_ref,attendance:ctx.attendance_ref};
     const ready=await readiness(c,ctx);
     if(outcome==='job_complete'){
+      if(!ready.finishAvailable)fail(422,'JOURNEY_NOT_WORKING','Finish Job is available once the Attendance is Working',{nextJourneyAction:ready.nextJourneyAction});
       const filtered=ready.missing.filter(x=>x.code!=='signature'||!signature);
       if(filtered.length)fail(422,'MISSING_REQUIREMENTS','Complete the required items before finishing the job',{missing:filtered});
     }else if(outcome==='follow_up'){
@@ -247,7 +293,7 @@ router.post('/api/v1/technician-close/:workOrder/:attendance/finish',requireAuth
     const display=outcome==='job_complete'?'Job Complete':outcome==='follow_up'?`Follow-up Required — ${reason}`:`Unable to Complete — ${reason}`;
     const data={...(ctx.attendance_data||{}),completionRoute:route,smartClose:{outcome,reason:reason||null,note:note||null,completedAt:now.toISOString(),signature:signature||null}};
     B.assertTransition('attendance',ctx.attendance_status,'Completed');
-    await c.query('UPDATE attendances SET status=\'Completed\',departed_at=$2,outcome=$3,data=$4::jsonb,version=version+1,updated_at=now() WHERE id=$1',[ctx.attendance_id,now,display+(note?` — ${note}`:''),JSON.stringify(data)]);
+    await c.query("UPDATE attendances SET status='Completed',departed_at=$2,outcome=$3,data=$4::jsonb,version=version+1,updated_at=now() WHERE id=$1",[ctx.attendance_id,now,display+(note?` — ${note}`:''),JSON.stringify(data)]);
     await B.audit(c,req,'Attendance',ctx.attendance_id,ctx.attendance_ref,'Smart Technician Close',{status:ctx.attendance_status},{status:'Completed',outcome:display,reason:reason||null,timeStopped:time},note||route);
 
     let woStatus=ctx.work_order_status,woOwner=ctx.current_owner,woNext=ctx.next_action,operationallyComplete=false;
@@ -282,5 +328,5 @@ router.post('/api/v1/technician-close/:workOrder/:attendance/finish',requireAuth
   res.json(result);
 }catch(e){next(e)}});
 
-router.use((err,req,res,next)=>{const status=err.status||500;console.error(JSON.stringify({level:'error',event:'stage6_smart_close_error',path:req.originalUrl,status,code:err.code||null,message:err.message}));res.status(status).json({error:err.code||'SERVER_ERROR',message:status>=500?'Unexpected Smart Technician Close error':err.message,missing:err.missing||undefined,requestId:req.id||null})});
+router.use((err,req,res,next)=>{const status=err.status||500;console.error(JSON.stringify({level:'error',event:'stage6_smart_close_error',path:req.originalUrl,status,code:err.code||null,message:err.message}));res.status(status).json({error:err.code||'SERVER_ERROR',message:status>=500?'Unexpected Smart Technician Close error':err.message,missing:err.missing||undefined,nextJourneyAction:err.nextJourneyAction||undefined,activeWorkOrder:err.activeWorkOrder||undefined,activeAttendance:err.activeAttendance||undefined,requestId:req.id||null})});
 module.exports=router;

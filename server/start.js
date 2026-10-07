@@ -20,7 +20,7 @@ async function start(){
   console.log(JSON.stringify({level:'info',event:'server_started',service:'Kooner FMS Stage 6',port,migration,regressionSeed,dcrStatus,environment:process.env.APP_ENV||'test'}));
   if((process.env.APP_ENV||'test')==='stage6-test'){
    runLiveAcceptance(port)
-    .then(()=>runExtendedAcceptance(port))
+    .then(core=>runExtendedAcceptance(port,core))
     .catch(e=>console.error(JSON.stringify({level:'error',event:'stage6_acceptance_failed',message:e.message,stack:e.stack})));
   }
  });
